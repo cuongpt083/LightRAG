@@ -1432,6 +1432,28 @@ async def validation_exception_handler(
         status_code=422, content={"detail": jsonable_encoder(exc.errors())}
     )
 
+def get_metrics_response() -> Response:
+    """Generate Prometheus metrics response supporting single and multi-process collectors."""
+    import os
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        generate_latest,
+        CollectorRegistry,
+        multiprocess,
+        REGISTRY,
+    )
+    import lightrag.query_metrics  # noqa: F401
+
+    if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        data = generate_latest(registry)
+    else:
+        data = generate_latest(REGISTRY)
+
+    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
+
 
 def create_app(args):
     # A server with no configured embedding model cannot protect its vectors.
@@ -2721,6 +2743,11 @@ def create_app(args):
         exposed.
         """
         return {"status": "ok"}
+    @app.get("/metrics", tags=["metrics"])
+    def metrics_endpoint():
+        """Prometheus metrics scraping endpoint."""
+        return get_metrics_response()
+
 
     @app.get("/auth-status")
     async def get_auth_status():
