@@ -24,6 +24,7 @@ from lightrag.constants import (
 )
 from lightrag.query_validation import validate_query_not_empty, validate_rag_query
 from lightrag.utils import logger
+from lightrag.query_metrics import record_query_duration, record_query_total
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -591,6 +592,8 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                 - 422: Request validation failed (e.g., query empty or too short)
                 - 500: Internal processing error (e.g., LLM service unavailable)
         """
+        start_time = time.perf_counter()
+        query_status = "error"
         try:
             param = request.to_query_params(
                 False
@@ -598,11 +601,9 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             # Force stream=False for /query endpoint regardless of include_references setting
             param.stream = False
             # Unified approach: always use aquery_llm for both cases
-            start_time = time.perf_counter()
             result = await rag.aquery_llm(request.query, param=param)
             response_time = round(time.perf_counter() - start_time, 3)
-
-            # Extract LLM response and references from unified result
+            query_status = "success"
             llm_response = result.get("llm_response", {})
             data = result.get("data", {})
             references = data.get("references", [])
@@ -658,6 +659,10 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)
             raise internal_server_error(e)
+        finally:
+            total_duration = time.perf_counter() - start_time
+            record_query_total(request.mode, query_status)
+            record_query_duration(request.mode, query_status, total_duration)
 
     def _build_stream_generator(
         *,

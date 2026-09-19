@@ -16,6 +16,7 @@ from lightrag.exceptions import (
     IndexFlushError,
     PipelineCancelledException,
 )
+from lightrag.query_metrics import record_query_stage
 from lightrag.utils import (
     logger,
     compute_mdhash_id,
@@ -4744,9 +4745,10 @@ async def kg_query(
 
     if progress_callback:
         await progress_callback(QueryProgress.EXTRACTING_KEYWORDS)
-    hl_keywords, ll_keywords = await get_keywords_from_query(
-        query, query_param, global_config, hashing_kv
-    )
+    with record_query_stage(query_param.mode, "extract_keywords_llm"):
+        hl_keywords, ll_keywords = await get_keywords_from_query(
+            query, query_param, global_config, hashing_kv
+        )
 
     logger.debug(f"High-level keywords: {hl_keywords}")
     logger.debug(f"Low-level  keywords: {ll_keywords}")
@@ -6097,18 +6099,19 @@ async def _build_query_context(
         return None
 
     # Stage 1: Pure search
-    search_result = await _perform_kg_search(
-        query,
-        ll_keywords,
-        hl_keywords,
-        knowledge_graph_inst,
-        entities_vdb,
-        relationships_vdb,
-        text_chunks_db,
-        query_param,
-        chunks_vdb,
-        progress_callback=progress_callback,
-    )
+    with record_query_stage(query_param.mode, "perform_kg_search"):
+        search_result = await _perform_kg_search(
+            query,
+            ll_keywords,
+            hl_keywords,
+            knowledge_graph_inst,
+            entities_vdb,
+            relationships_vdb,
+            text_chunks_db,
+            query_param,
+            chunks_vdb,
+            progress_callback=progress_callback,
+        )
 
     if not search_result["final_entities"] and not search_result["final_relations"]:
         if query_param.mode != "mix":
@@ -6118,26 +6121,27 @@ async def _build_query_context(
                 return None
 
     # Stage 2: Apply token truncation for LLM efficiency
-    truncation_result = await _apply_token_truncation(
-        search_result,
-        query_param,
-        text_chunks_db.global_config,
-    )
+    with record_query_stage(query_param.mode, "token_truncation"):
+        truncation_result = await _apply_token_truncation(
+            search_result,
+            query_param,
+            text_chunks_db.global_config,
+        )
 
     # Stage 3: Merge chunks using filtered entities/relations
-    merged_chunks = await _merge_all_chunks(
-        filtered_entities=truncation_result["filtered_entities"],
-        filtered_relations=truncation_result["filtered_relations"],
-        vector_chunks=search_result["vector_chunks"],
-        query=query,
-        knowledge_graph_inst=knowledge_graph_inst,
-        text_chunks_db=text_chunks_db,
-        query_param=query_param,
-        chunks_vdb=chunks_vdb,
-        chunk_tracking=search_result["chunk_tracking"],
-        query_embedding=search_result["query_embedding"],
-    )
-
+    with record_query_stage(query_param.mode, "merge_chunks"):
+        merged_chunks = await _merge_all_chunks(
+            filtered_entities=truncation_result["filtered_entities"],
+            filtered_relations=truncation_result["filtered_relations"],
+            vector_chunks=search_result["vector_chunks"],
+            query=query,
+            knowledge_graph_inst=knowledge_graph_inst,
+            text_chunks_db=text_chunks_db,
+            query_param=query_param,
+            chunks_vdb=chunks_vdb,
+            chunk_tracking=search_result["chunk_tracking"],
+            query_embedding=search_result["query_embedding"],
+        )
     if (
         not merged_chunks
         and not truncation_result["entities_context"]
@@ -6896,7 +6900,8 @@ async def naive_query(
 
     if progress_callback:
         await progress_callback(QueryProgress.RETRIEVING_CHUNKS)
-    chunks = await _get_vector_context(query, chunks_vdb, query_param, None)
+    with record_query_stage("naive", "vector_search_chunks"):
+        chunks = await _get_vector_context(query, chunks_vdb, query_param, None)
 
     if chunks is None or len(chunks) == 0:
         logger.info(
