@@ -1435,23 +1435,30 @@ async def validation_exception_handler(
 def get_metrics_response() -> Response:
     """Generate Prometheus metrics response supporting single and multi-process collectors."""
     import os
-    from prometheus_client import (
-        CONTENT_TYPE_LATEST,
-        generate_latest,
-        CollectorRegistry,
-        multiprocess,
-        REGISTRY,
-    )
-    import lightrag.query_metrics  # noqa: F401
+    try:
+        from prometheus_client import (
+            CONTENT_TYPE_LATEST,
+            generate_latest,
+            CollectorRegistry,
+            multiprocess,
+            REGISTRY,
+        )
+        import lightrag.query_metrics  # noqa: F401
 
-    if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
-        registry = CollectorRegistry()
-        multiprocess.MultiProcessCollector(registry)
-        data = generate_latest(registry)
-    else:
-        data = generate_latest(REGISTRY)
+        if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
+            registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(registry)
+            data = generate_latest(registry)
+        else:
+            data = generate_latest(REGISTRY)
 
-    return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+    except ImportError:
+        return Response(
+            content="# prometheus_client library not installed in runtime environment\n",
+            status_code=503,
+            media_type="text/plain",
+        )
 
 
 
