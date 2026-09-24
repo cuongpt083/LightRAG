@@ -1,4 +1,18 @@
-import pytest
+try:
+    import pytest
+except ImportError:
+    class _RaisesContext:
+        def __init__(self, exc):
+            self.exc = exc
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return exc_type is not None and issubclass(exc_type, self.exc)
+    class _PytestMock:
+        @staticmethod
+        def raises(exc):
+            return _RaisesContext(exc)
+    pytest = _PytestMock()
 import time
 from lightrag.query_metrics import (
     record_query_duration,
@@ -32,3 +46,15 @@ def test_record_query_stage_catches_exception_safely():
     samples = QUERY_STAGE_DURATION.labels(mode="mix", stage="perform_kg_search")._samples()
     count = [s.value for s in samples if s.name.endswith("_count")][0]
     assert count >= 1
+
+def test_record_llm_call():
+    before = LLM_CALL_DURATION.labels(role="keyword")._sum.get()
+    record_llm_call("keyword", 1.5)
+    after = LLM_CALL_DURATION.labels(role="keyword")._sum.get()
+    assert after >= before + 1.5
+
+def test_init_default_metrics():
+    from lightrag.query_metrics import init_default_metrics
+    init_default_metrics()
+    assert QUERY_TOTAL.labels(mode="mix", status="success") is not None
+    assert LLM_CALL_DURATION.labels(role="keyword") is not None

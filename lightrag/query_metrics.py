@@ -43,11 +43,33 @@ if PROMETHEUS_AVAILABLE:
         ["role"],
         buckets=[0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0],
     )
+
+    def init_default_metrics() -> None:
+        """Pre-populate common metric series so Prometheus exposes initialized metrics before first query."""
+        if not PROMETHEUS_AVAILABLE or QUERY_DURATION is None:
+            return
+        common_modes = ("mix", "naive", "hybrid", "local", "global", "bypass")
+        common_statuses = ("success", "error")
+        for m in common_modes:
+            for s in common_statuses:
+                QUERY_TOTAL.labels(mode=m, status=s)
+                QUERY_DURATION.labels(mode=m, status=s)
+        for m in ("mix", "hybrid", "local", "global"):
+            for st in ("extract_keywords_llm", "perform_kg_search", "token_truncation", "merge_chunks"):
+                QUERY_STAGE_DURATION.labels(mode=m, stage=st)
+        QUERY_STAGE_DURATION.labels(mode="naive", stage="vector_search_chunks")
+        for role in ("extract", "keyword", "query", "vlm"):
+            LLM_CALL_DURATION.labels(role=role)
+
+    init_default_metrics()
 else:
     QUERY_DURATION = None
     QUERY_TOTAL = None
     QUERY_STAGE_DURATION = None
     LLM_CALL_DURATION = None
+
+    def init_default_metrics() -> None:
+        pass
 
 
 def record_query_duration(mode: str, status: str, duration: float) -> None:

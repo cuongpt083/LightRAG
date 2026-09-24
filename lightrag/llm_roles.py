@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
@@ -186,6 +187,29 @@ class _RoleLLMMixin:
         model_kwargs: dict[str, Any],
     ) -> Callable[..., object]:
         spec = ROLES_BY_NAME[role_name]
+
+        async def _timed_raw_func(*args, **kwargs):
+            start = time.perf_counter()
+            from lightrag.query_metrics import record_llm_call
+            try:
+                res = await raw_func(*args, **kwargs)
+            except Exception:
+                record_llm_call(role_name, time.perf_counter() - start)
+                raise
+
+            if hasattr(res, "__aiter__"):
+                async def _timed_aiter(aiter):
+                    try:
+                        async for item in aiter:
+                            yield item
+                    finally:
+                        record_llm_call(role_name, time.perf_counter() - start)
+
+                return _timed_aiter(res)
+            else:
+                record_llm_call(role_name, time.perf_counter() - start)
+                return res
+
         return priority_limit_async_func_call(
             max_async,
             llm_timeout=timeout,
@@ -193,7 +217,7 @@ class _RoleLLMMixin:
             concurrency_group=f"llm:{role_name}",
         )(
             partial(
-                raw_func,
+                _timed_raw_func,
                 hashing_kv=self.llm_response_cache,
                 **model_kwargs,
             )

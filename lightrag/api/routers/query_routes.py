@@ -999,6 +999,17 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
 
             start_time = time.perf_counter()
 
+            async def _instrumented_stream(gen):
+                stream_status = "error"
+                try:
+                    async for chunk in gen:
+                        yield chunk
+                    stream_status = "success"
+                finally:
+                    duration = time.perf_counter() - start_time
+                    record_query_total(request.mode, stream_status)
+                    record_query_duration(request.mode, stream_status, duration)
+
             # When the client opts in via include_progress, run aquery_llm as a
             # background task so progress events can be interleaved into the
             # NDJSON stream before the response chunks. When include_progress
@@ -1082,7 +1093,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                             await asyncio.gather(query_task, return_exceptions=True)
 
                 return StreamingResponse(
-                    merged_generator(),
+                    _instrumented_stream(merged_generator()),
                     media_type="application/x-ndjson",
                     headers={
                         "Cache-Control": "no-cache",
@@ -1103,7 +1114,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                 )
 
                 return StreamingResponse(
-                    stream_gen(),
+                    _instrumented_stream(stream_gen()),
                     media_type="application/x-ndjson",
                     headers={
                         "Cache-Control": "no-cache",
@@ -1113,6 +1124,8 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     },
                 )
         except Exception as e:
+            record_query_total(request.mode, "error")
+            record_query_duration(request.mode, "error", time.perf_counter() - start_time)
             logger.error(f"Error processing streaming query: {str(e)}", exc_info=True)
             raise internal_server_error(e)
 
@@ -1528,12 +1541,15 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             This endpoint always includes references regardless of the include_references parameter,
             as structured data analysis typically requires source attribution.
         """
+        start_time = time.perf_counter()
+        query_status = "error"
         try:
             param = request.to_query_params(False)  # No streaming for data endpoint
             response = await rag.aquery_data(request.query, param=param)
 
             # aquery_data returns the new format with status, message, data, and metadata
             if isinstance(response, dict):
+                query_status = "success"
                 return QueryDataResponse(**response)
             else:
                 # Handle unexpected response format
@@ -1546,5 +1562,9 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
         except Exception as e:
             logger.error(f"Error processing data query: {str(e)}", exc_info=True)
             raise internal_server_error(e)
+        finally:
+            total_duration = time.perf_counter() - start_time
+            record_query_total(request.mode, query_status)
+            record_query_duration(request.mode, query_status, total_duration)
 
     return router

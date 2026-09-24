@@ -1,4 +1,7 @@
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from lightrag.query_metrics import QUERY_STAGE_DURATION, QUERY_DURATION, QUERY_TOTAL
 
 def test_query_stage_definitions():
